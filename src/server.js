@@ -5,6 +5,7 @@ dotenv.config();
 
 const app = require('./app');
 const { connectDB } = require('./config/db');
+require('./utils/redisClient');
 
 const PORT = process.env.PORT || 5000;
 

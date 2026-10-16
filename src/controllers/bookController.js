@@ -1,5 +1,6 @@
 const Book = require('../models/Book');
 const User = require('../models/User');
+const redisClient = require('../utils/redisClient');
 
 // @desc    Store a single book (or multiple if array is passed)
 // @route   POST /api/books
@@ -43,6 +44,13 @@ const storeSingleBook = async (req, res, next) => {
       inStock,
       author: authorId,
     });
+
+    // Invalidate books cache
+    try {
+      await redisClient.del('books-data');
+    } catch (cacheErr) {
+      console.error('Redis cache invalidation error:', cacheErr.message || cacheErr);
+    }
 
     res.status(201).json({
       success: true,
@@ -91,6 +99,13 @@ const storeBooks = async (req, res, next) => {
     }
 
     const insertedBooks = await Book.insertMany(preparedBooks);
+
+    // Invalidate books cache
+    try {
+      await redisClient.del('books-data');
+    } catch (cacheErr) {
+      console.error('Redis cache invalidation error:', cacheErr.message || cacheErr);
+    }
 
     res.status(201).json({
       success: true,
@@ -143,9 +158,35 @@ const getAllBooks = async (req, res, next) => {
 // @access  Public
 const getAllBooksWithAuthor = async (req, res, next) => {
   try {
+    const key = 'books-data';
+
+    // 1. Check if cached data exists in Redis
+    try {
+      const cachedData = await redisClient.get(key);
+      if (cachedData) {
+        const parsed = JSON.parse(cachedData);
+        return res.status(200).json({
+          success: true,
+          count: parsed.length,
+          message: 'Fetched all books with author details successfully',
+          data: parsed,
+        });
+      }
+    } catch (cacheErr) {
+      console.error('Redis cache get error:', cacheErr.message || cacheErr);
+    }
+
+    // 2. Query MongoDB if not found in cache
     const books = await Book.find()
       .populate('author', 'name email role bio createdAt')
       .sort({ createdAt: -1 });
+
+    // 3. Cache the fetched data in Redis (TTL: 60 seconds)
+    try {
+      await redisClient.set(key, JSON.stringify(books), 'EX', 60);
+    } catch (cacheErr) {
+      console.error('Redis cache set error:', cacheErr.message || cacheErr);
+    }
 
     res.status(200).json({
       success: true,
